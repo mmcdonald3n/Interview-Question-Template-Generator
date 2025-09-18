@@ -3,15 +3,13 @@
 # What this app does
 # - Upload a Job Description (TXT / DOCX / PDF / MD) OR paste JD text
 # - Generates interview questions in Neogen house style, aligned to the "Neogen 1st Interview Guide" structure
-# - Extra guardrails: explicit US + EU legal-compliance instructions for the model
-# - Sections: Intro, Background, Motivation, Skills, Company Knowledge, Role-Specific, Behavioural, Scenario, Candidate Qs, Conclusion, Rubric, Scorecard
-# - Includes red flags, suggested follow-ups, and a concise scoring rubric
-# - Preflight JD "Compliance Hints" panel to flag risky wording (e.g., "young", "able-bodied", "recent graduate", "citizen only")
+# - Legal guardrails for US + EU
+# - Preflight JD "Compliance Hints" (flags risky wording like “young”, “recent graduate”, etc.)
 # - Download as DOCX or Markdown
 #
-# Setup
+# Setup (local)
 #   pip install -r requirements.txt
-#   export OPENAI_API_KEY=your_key_here
+#   export OPENAI_API_KEY=your_key_here   # or set in Streamlit Cloud secrets
 #   streamlit run app.py
 
 import os
@@ -29,6 +27,7 @@ try:
     from docx.oxml.ns import qn
 except Exception:
     Document = None  # type: ignore
+
 try:
     from pypdf import PdfReader
 except Exception:
@@ -47,7 +46,36 @@ HOUSE_STYLE_NAME = "Neogen House Style"
 st.set_page_config(page_title=APP_TITLE, page_icon="🧠", layout="wide")
 
 # ---------------------------
-# Utility: Extract text
+# Logo utilities
+# ---------------------------
+
+def get_logo_path() -> str | None:
+    candidates = [
+        "neogen-logo-green.webp",
+        "neogen_logo_green.webp",
+        "neogen-logo-green.png",
+        "assets/neogen-logo-green.webp",
+        "assets/neogen-logo-green.png",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+def header():
+    col_logo, col_title = st.columns([1, 6], vertical_alignment="center")
+    with col_logo:
+        lp = get_logo_path()
+        if lp:
+            st.image(lp, use_container_width=True)
+    with col_title:
+        st.title(APP_TITLE)
+        st.caption("Upload a JD and get structured interview questions in Neogen’s house style with US+EU legal guardrails.")
+
+header()
+
+# ---------------------------
+# Text extraction
 # ---------------------------
 
 def extract_text_from_upload(upload) -> str:
@@ -62,14 +90,14 @@ def extract_text_from_upload(upload) -> str:
             return data.decode("latin-1", errors="ignore")
     if name.endswith(".docx"):
         if Document is None:
-            st.error("python-docx not installed. Run: pip install python-docx")
+            st.error("python-docx not installed. Add `python-docx` to requirements.txt and redeploy.")
             return ""
         file_like = io.BytesIO(data)
         doc = Document(file_like)
         return "\n".join(p.text for p in doc.paragraphs)
     if name.endswith(".pdf"):
         if PdfReader is None:
-            st.error("pypdf not installed. Run: pip install pypdf")
+            st.error("pypdf not installed. Add `pypdf` to requirements.txt and redeploy.")
             return ""
         file_like = io.BytesIO(data)
         reader = PdfReader(file_like)
@@ -103,10 +131,10 @@ def compliance_findings(text: str) -> List[Tuple[str, str]]:
     findings = []
     lowered = text.lower()
     for pattern, advice in RISKY_PHRASES.items():
-        if re.search(pattern, lowered):
-            m = re.search(pattern, lowered)
-            snippet = text[max(0, (m.start() or 0) - 30): (m.end() or 0) + 30] if m else ""
-            findings.append((pattern.strip("\\b"), advice + (f"  Snippet: …{snippet}…" if snippet else "")))
+        m = re.search(pattern, lowered)
+        if m:
+            snippet = text[max(0, m.start() - 30): m.end() + 30]
+            findings.append((pattern.strip("\\b"), f"{advice}  Snippet: …{snippet}…"))
     return findings
 
 # ---------------------------
@@ -190,7 +218,7 @@ Formatting notes:
 
 def call_llm(prompt: str, system_prompt: str, model: str = "gpt-4o-mini") -> str:
     if _client is None:
-        # Fallback deterministic message if no API key/SDK
+        # Fallback if no OPENAI_API_KEY set (so the UI still works for demo)
         return (
             "**Introduction (Script, 1–2 mins)**\n"
             "• Welcome and interview format overview.\n\n"
@@ -201,7 +229,7 @@ def call_llm(prompt: str, system_prompt: str, model: str = "gpt-4o-mini") -> str
             "**Skills & Qualifications (6–8 mins)**\n"
             "• Walk me through a recent example demonstrating a core JD must-have. – How did you measure success?\n\n"
             "**Company Knowledge (2–3 mins)**\n"
-            "• Where could you contribute first 90 days and why?\n\n"
+            "• Where could you contribute in your first 90 days and why?\n\n"
             "**Role-Specific Questions (Core, 10–12 mins)**\n"
             "• Deep dive prompt…\n\n"
             "**Behavioural (Values & Ways of Working, 6–8 mins)**\n"
@@ -217,7 +245,6 @@ def call_llm(prompt: str, system_prompt: str, model: str = "gpt-4o-mini") -> str
             "**Scorecard Template & Notes Page**\n"
             "• Role | Interviewer | Date …\n"
         )
-
     resp = _client.chat.completions.create(
         model=model,
         messages=[
@@ -234,22 +261,20 @@ def call_llm(prompt: str, system_prompt: str, model: str = "gpt-4o-mini") -> str
 # ---------------------------
 
 def to_markdown(text: str) -> str:
-    # Ensure single newlines between bullets/sections; strip stray code fences
     text = re.sub(r"```+", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 def to_docx(markdown_like: str) -> bytes:
     if Document is None:
-        st.error("python-docx not installed. Run: pip install python-docx")
+        st.error("python-docx not installed. Add `python-docx` to requirements.txt and redeploy.")
         return b""
     doc = Document()
-
-    # Basic style tweaks (optional)
+    # Basic style tweaks
     try:
         style = doc.styles["Normal"]
         style.font.name = "Calibri"
-        style._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')  # ensure font applied
+        style._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
         style.font.size = Pt(11)
     except Exception:
         pass
@@ -292,15 +317,11 @@ def to_docx(markdown_like: str) -> bytes:
 # UI
 # ---------------------------
 
-st.title(APP_TITLE)
-st.caption("Upload a JD and get structured interview questions in Neogen’s house style with US+EU legal guardrails.")
-
 with st.sidebar:
     st.subheader("Generation Settings")
     seniority = st.selectbox("Seniority", ["Entry", "Associate", "Mid", "Senior", "Manager", "Director", "Executive"], index=3)
-    region = st.selectbox("Region / Market Context", ["USA", "Canada", "UK & Ireland", "EMEA", "LATAM", "APAC", "Global"], index=2)
+    region = st.selectbox("Region / Market Context", ["USA", "Canada", "UK & Ireland", "EMEA", "LATAM", "APAC", "Global"], index=0)
     per_section = st.slider("Questions per section", 3, 10, 5)
-
     model = st.selectbox("Model", ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"], index=0)
     include_legal_footer = st.checkbox("Include Compliance Advisory at end", value=True)
     st.write(":information_source: Uses your OPENAI_API_KEY from environment.")
@@ -366,7 +387,6 @@ if jd_text:
                 label="Download as DOCX",
                 data=docx_bytes,
                 file_name=f"{base_name}.docx",
-
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
         with dl_col2:
