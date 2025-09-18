@@ -365,7 +365,8 @@ if jd_text:
             st.download_button(
                 label="Download as DOCX",
                 data=docx_bytes,
-                file_name=f"{base_name}.docx}",
+                file_name=f"{base_name}.docx",
+
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
         with dl_col2:
