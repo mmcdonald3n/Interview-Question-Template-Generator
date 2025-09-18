@@ -1,2 +1,8 @@
-# Interview-Question-Template-Generator
-To generate good quality interview question templates for our hiring managers to use in their hiring processes. 
+# Interview Question Generator
+
+Streamlit app that turns a JD into structured, legally-aware interview questions.
+
+## Deploy on Streamlit
+- Set secret: `OPENAI_API_KEY`.
+
+## Local (optional)
